@@ -7,8 +7,11 @@ import os
 
 app = Flask(__name__)
 
+# ใช้ /tmp/ บน Render เพื่อให้เขียนข้อมูลลงฐานข้อมูลได้
+DB_PATH = '/tmp/assets.db'
+
 def init_db():
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS assets (
@@ -208,7 +211,7 @@ HTML_TEMPLATE = '''
 def index():
     search_query = request.args.get('search', '')
     category_filter = request.args.get('category', '')
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     query = 'SELECT * FROM assets WHERE 1=1'
     params = []
@@ -243,7 +246,7 @@ def index():
 
 @app.route('/schedule/<int:asset_id>')
 def schedule(asset_id):
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM assets WHERE id = ?', (asset_id,))
     row = cursor.fetchone()
@@ -270,7 +273,7 @@ def schedule(asset_id):
 
 @app.route('/schedule/export_excel/<int:asset_id>')
 def schedule_export_excel(asset_id):
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM assets WHERE id = ?', (asset_id,))
     row = cursor.fetchone()
@@ -301,7 +304,7 @@ def schedule_export_excel(asset_id):
 def add_asset():
     code, name, category, purchase_date, price, life_years = request.form['code'], request.form['name'], request.form['category'], request.form['purchase_date'], float(request.form['price']), int(request.form['life_years'])
     is_low_value = 1 if price < 5000 else 0
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
         cursor.execute('INSERT INTO assets (code, name, category, purchase_date, price, life_years, is_low_value) VALUES (?, ?, ?, ?, ?, ?, ?)', (code, name, category, purchase_date, price, life_years, is_low_value))
@@ -312,7 +315,7 @@ def add_asset():
 
 @app.route('/export_excel')
 def export_excel():
-    conn = sqlite3.connect('assets.db')
+    conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query('SELECT code AS "รหัสครุภัณฑ์", name AS "ชื่อรายการ", category AS "ประเภท", purchase_date AS "วันที่จัดซื้อ", price AS "ราคาทุน", life_years AS "อายุการใช้งาน(ปี)" FROM assets', conn)
     conn.close()
     output = io.BytesIO()
@@ -324,3 +327,6 @@ if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+else:
+    # สำหรับให้ Gunicorn เรียกใช้งานบน Render
+    init_db()
