@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime
 import io
 import os
+from openpyxl.worksheet.datavalidation import DataValidation
 
 app = Flask(__name__)
 
@@ -103,7 +104,7 @@ HTML_TEMPLATE = '''
             <div class="mt-4 d-flex justify-content-between no-print">
                 <a href="/" class="btn btn-secondary px-4">กลับหน้าหลัก</a>
                 <div>
-                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel (ฟอร์มทางการ)</a>
+                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel (ฟอร์มทางการพร้อม Dropdown)</a>
                     <button type="button" class="btn btn-danger px-4" onclick="window.print()">พิมพ์ PDF / เอกสาร</button>
                 </div>
             </div>
@@ -214,7 +215,6 @@ def index():
     category_filter = request.args.get('category', '')
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    # จัดเรียงตามวันที่จัดซื้อจากเก่าไปใหม่ (ASC)
     query = 'SELECT * FROM assets WHERE 1=1'
     params = []
     if search_query:
@@ -318,23 +318,42 @@ def schedule_export_excel(asset_id):
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # สร้างส่วนหัวตามแบบฟอร์มทะเบียนคุมทรัพย์สิน
-        header_info = pd.DataFrame([
-            ["ทะเบียนคุมทรัพย์สิน", "", "", "", ""],
-            ["ส่วนราชการ: โรงเรียนอนุบาลอุทุมพรพิสัย", "", "", "", ""],
-            [f"ประเภท: {category}", "", f"รหัสครุภัณฑ์: {code}", "", ""],
-            [f"ชื่อรายการ: {name}", "", f"วันที่จัดซื้อ: {purchase_date_str}", "", ""],
-            [f"ราคาทุน: {price:,.2f} บาท", "", f"อายุการใช้งาน: {life_years} ปี", "", ""],
-            ["", "", "", "", ""]
-        ])
-        header_info.to_excel(writer, index=False, header=False, sheet_name='ทะเบียนคุมทรัพย์สิน')
+        # สร้างส่วนหัวตามฟอร์มทางการของทะเบียนคุมทรัพย์สิน
+        header_data = [
+            ["", "", "", "", "", "ทะเบียนคุมทรัพย์สิน", "", "", "", "", ""],
+            ["", "", "", "", "", "", "", "", "ส่วนราชการ", "สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน", ""],
+            ["", "", "", "", "", "", "", "", "หน่วยงาน", "โรงเรียนอนุบาลอุทุมพรพิสัย", ""],
+            ["", "", "", "", "", "", "", "", "", "", ""],
+            ["ประเภท", category, "", "", "หมายเลขครุภัณฑ์", code, "", "", "", "", ""],
+            ["รายการ", name, "", "", "ยี่ห้อ/รุ่น/ลักษณะเฉพาะ", "-", "", "", "", "", ""],
+            ["", "", "", "", "สถานที่ใช้งาน/หน่วยงานรับผิดชอบ", "งานพัสดุ โรงเรียนอนุบาลอุทุมพรพิสัย", "", "", "", "", ""],
+            ["ชื่อผู้ขาย/ผู้รับจ้าง/ผู้บริจาค", "-", "", "", "ที่อยู่", "-", "", "", "", "", ""],
+            ["ประเภทเงิน", "เงินงบประมาณ", "", "", "", "", "", "", "", "", ""],
+            ["วิธีการได้มา", "วิธีเฉพาะเจาะจง", "", "", "", "", "", "", "", "", ""],
+            ["", "", "", "", "", "", "", "", "", "", ""]
+        ]
         
-        # เขียนตารางค่าเสื่อมต่อลงไปใน Sheet เดิม
+        df_header = pd.DataFrame(header_data)
+        df_header.to_excel(writer, index=False, header=False, sheet_name='ทะเบียนคุมทรัพย์สิน')
+        
+        # เขียนตารางค่าเสื่อมต่อลงไปในแถวที่ 13 (index 12)
         df_schedule = pd.DataFrame(schedule_data)
-        df_schedule.to_excel(writer, index=False, startrow=6, sheet_name='ทะเบียนคุมทรัพย์สิน')
+        df_schedule.to_excel(writer, index=False, startrow=12, sheet_name='ทะเบียนคุมทรัพย์สิน')
+        
+        # เพิ่ม Dropdown (Data Validation) สำหรับประเภทเงิน (เซลล์ B9) และวิธีการได้มา (เซลล์ B10)
+        workbook = writer.book
+        worksheet = writer.sheets['ทะเบียนคุมทรัพย์สิน']
+        
+        dv_money = DataValidation(type="list", formula1='"เงินงบประมาณ, เงินนอกงบประมาณ, เงินบริจาค/เงินช่วยเหลือ, อื่นๆ"', allow_blank=True)
+        worksheet.add_data_validation(dv_money)
+        dv_money.add("B9")
+        
+        dv_method = DataValidation(type="list", formula1='"วิธีเฉพาะเจาะจง, วิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding), วิธีคัดเลือก, รับบริจาค"', allow_blank=True)
+        worksheet.add_data_validation(dv_method)
+        dv_method.add("B10")
 
     output.seek(0)
-    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'form2_asset_{code}.xlsx')
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'form2_{code}.xlsx')
 
 @app.route('/add', methods=['POST'])
 def add_asset():
