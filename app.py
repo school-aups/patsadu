@@ -7,7 +7,6 @@ import os
 
 app = Flask(__name__)
 
-# ใช้ /tmp/ บน Render เพื่อให้เขียนข้อมูลลงฐานข้อมูลได้
 DB_PATH = '/tmp/assets.db'
 
 def init_db():
@@ -104,7 +103,7 @@ HTML_TEMPLATE = '''
             <div class="mt-4 d-flex justify-content-between no-print">
                 <a href="/" class="btn btn-secondary px-4">กลับหน้าหลัก</a>
                 <div>
-                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel</a>
+                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel (ฟอร์มทางการ)</a>
                     <button type="button" class="btn btn-danger px-4" onclick="window.print()">พิมพ์ PDF / เอกสาร</button>
                 </div>
             </div>
@@ -164,7 +163,7 @@ HTML_TEMPLATE = '''
                 </div>
             </form>
             <div class="col-md-2 text-end">
-                <a href="/export_excel" class="btn btn-success w-100 fw-semibold">ดาวน์โหลด Excel</a>
+                <a href="/export_excel" class="btn btn-success w-100 fw-semibold">ดาวน์โหลดภาพรวม</a>
             </div>
         </div>
 
@@ -174,9 +173,10 @@ HTML_TEMPLATE = '''
                     <th>รหัส</th>
                     <th>ชื่อรายการ</th>
                     <th>ประเภท</th>
+                    <th>วันที่จัดซื้อ</th>
                     <th>ราคาทุน</th>
                     <th>สถานะ</th>
-                    <th>ค่าเสื่อมสะสม (ปีปัจจุบัน)</th>
+                    <th>ค่าเสื่อมสะสม</th>
                     <th>มูลค่าสุทธิ</th>
                     <th>จัดการ</th>
                 </tr>
@@ -187,6 +187,7 @@ HTML_TEMPLATE = '''
                     <td>{{ item.code }}</td>
                     <td>{{ item.name }}</td>
                     <td>{{ item.category }}</td>
+                    <td>{{ item.purchase_date }}</td>
                     <td>{{ "{:,.2f}".format(item.price) }}</td>
                     <td>
                         <span class="badge {% if item.status == 'ต่ำกว่าเกณฑ์' %}bg-warning text-dark{% else %}bg-success{% endif %}">
@@ -213,6 +214,7 @@ def index():
     category_filter = request.args.get('category', '')
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    # จัดเรียงตามวันที่จัดซื้อจากเก่าไปใหม่ (ASC)
     query = 'SELECT * FROM assets WHERE 1=1'
     params = []
     if search_query:
@@ -221,6 +223,9 @@ def index():
     if category_filter:
         query += ' AND category = ?'
         params.append(category_filter)
+    
+    query += ' ORDER BY purchase_date ASC'
+    
     cursor.execute(query, params)
     rows = cursor.fetchall()
     cursor.execute('SELECT DISTINCT category FROM assets')
@@ -241,7 +246,7 @@ def index():
             acc_dep = min(dep_per_year * max(0, years_passed), price - salvage_value)
             net_val = max(1.0, price - acc_dep)
             status = "ปกติ (เส้นตรง)"
-        assets.append({"id": asset_id, "code": code, "name": name, "category": category, "price": price, "status": status, "acc_dep": round(acc_dep, 2), "net_val": round(net_val, 2)})
+        assets.append({"id": asset_id, "code": code, "name": name, "category": category, "purchase_date": purchase_date_str, "price": price, "status": status, "acc_dep": round(acc_dep, 2), "net_val": round(net_val, 2)})
     return render_template_string(HTML_TEMPLATE, assets=assets, categories=categories, search=search_query, selected_cat=category_filter, view_mode='list')
 
 @app.route('/schedule/<int:asset_id>')
@@ -279,10 +284,20 @@ def schedule_export_excel(asset_id):
     row = cursor.fetchone()
     conn.close()
     if not row: return redirect(url_for('index'))
-    code, purchase_year, price, life_years, is_low_value, salvage_value = row[1], datetime.strptime(row[4], "%Y-%m-%d").year, row[5], row[6], row[7], 1.0
-    data = []
+    
+    asset_id, code, name, category, purchase_date_str, price, life_years, is_low_value = row
+    purchase_year = datetime.strptime(purchase_date_str, "%Y-%m-%d").year
+    salvage_value = 1.0
+    
+    schedule_data = []
     if is_low_value == 1:
-        data.append({"ปีพุทธศักราช (พ.ศ.)": purchase_year + 543, "มูลค่าต้นงวด (บาท)": price, "ค่าเสื่อมราคาประจำปี (บาท)": 0.0, "ค่าเสื่อมราคาสะสม (บาท)": 0.0, "มูลค่าสุทธิปลายงวด (บาท)": price})
+        schedule_data.append({
+            "ปีพุทธศักราช (พ.ศ.)": purchase_year + 543,
+            "มูลค่าต้นงวด (บาท)": price,
+            "ค่าเสื่อมราคาประจำปี (บาท)": 0.0,
+            "ค่าเสื่อมราคาสะสม (บาท)": 0.0,
+            "มูลค่าสุทธิปลายงวด (บาท)": price
+        })
     else:
         dep_per_year = (price - salvage_value) / life_years
         accumulated, current_book_value = 0.0, price
@@ -292,13 +307,34 @@ def schedule_export_excel(asset_id):
             dep = (price - salvage_value - accumulated) if i == life_years - 1 else dep_per_year
             accumulated += dep
             end_val = max(salvage_value, price - accumulated)
-            data.append({"ปีพุทธศักราช (พ.ศ.)": year_be, "มูลค่าต้นงวด (บาท)": round(beg_val, 2), "ค่าเสื่อมราคาประจำปี (บาท)": round(dep, 2), "ค่าเสื่อมราคาสะสม (บาท)": round(accumulated, 2), "มูลค่าสุทธิปลายงวด (บาท)": round(end_val, 2)})
+            schedule_data.append({
+                "ปีพุทธศักราช (พ.ศ.)": year_be,
+                "มูลค่าต้นงวด (บาท)": round(beg_val, 2),
+                "ค่าเสื่อมราคาประจำปี (บาท)": round(dep, 2),
+                "ค่าเสื่อมราคาสะสม (บาท)": round(accumulated, 2),
+                "มูลค่าสุทธิปลายงวด (บาท)": round(end_val, 2)
+            })
             current_book_value = end_val
-    df = pd.DataFrame(data)
+
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='ค่าเสื่อมรายปี')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # สร้างส่วนหัวตามแบบฟอร์มทะเบียนคุมทรัพย์สิน
+        header_info = pd.DataFrame([
+            ["ทะเบียนคุมทรัพย์สิน", "", "", "", ""],
+            ["ส่วนราชการ: โรงเรียนอนุบาลอุทุมพรพิสัย", "", "", "", ""],
+            [f"ประเภท: {category}", "", f"รหัสครุภัณฑ์: {code}", "", ""],
+            [f"ชื่อรายการ: {name}", "", f"วันที่จัดซื้อ: {purchase_date_str}", "", ""],
+            [f"ราคาทุน: {price:,.2f} บาท", "", f"อายุการใช้งาน: {life_years} ปี", "", ""],
+            ["", "", "", "", ""]
+        ])
+        header_info.to_excel(writer, index=False, header=False, sheet_name='ทะเบียนคุมทรัพย์สิน')
+        
+        # เขียนตารางค่าเสื่อมต่อลงไปใน Sheet เดิม
+        df_schedule = pd.DataFrame(schedule_data)
+        df_schedule.to_excel(writer, index=False, startrow=6, sheet_name='ทะเบียนคุมทรัพย์สิน')
+
     output.seek(0)
-    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'depreciation_{code}.xlsx')
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'form2_asset_{code}.xlsx')
 
 @app.route('/add', methods=['POST'])
 def add_asset():
@@ -316,17 +352,16 @@ def add_asset():
 @app.route('/export_excel')
 def export_excel():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query('SELECT code AS "รหัสครุภัณฑ์", name AS "ชื่อรายการ", category AS "ประเภท", purchase_date AS "วันที่จัดซื้อ", price AS "ราคาทุน", life_years AS "อายุการใช้งาน(ปี)" FROM assets', conn)
+    df = pd.read_sql_query('SELECT code AS "รหัสครุภัณฑ์", name AS "ชื่อรายการ", category AS "ประเภท", purchase_date AS "วันที่จัดซื้อ", price AS "ราคาทุน", life_years AS "อายุการใช้งาน(ปี)" FROM assets ORDER BY purchase_date ASC', conn)
     conn.close()
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='Sheet1')
+    with pd.ExcelWriter(output, engine='openpyxl') as writer: df.to_excel(writer, index=False, sheet_name='รายการครุภัณฑ์ทั้งหมด')
     output.seek(0)
-    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name='asset_report.xlsx')
+    return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name='all_assets_report.xlsx')
 
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
 else:
-    # สำหรับให้ Gunicorn เรียกใช้งานบน Render
     init_db()
