@@ -22,7 +22,11 @@ def init_db():
             purchase_date TEXT,
             price REAL,
             life_years INTEGER,
-            is_low_value INTEGER
+            is_low_value INTEGER,
+            model_spec TEXT,
+            location TEXT,
+            money_type TEXT,
+            acquire_method TEXT
         )
     ''')
     conn.commit()
@@ -65,11 +69,13 @@ HTML_TEMPLATE = '''
                     <p class="mb-1"><strong>รหัสครุภัณฑ์:</strong> {{ asset.code }}</p>
                     <p class="mb-1"><strong>ชื่อรายการ:</strong> {{ asset.name }}</p>
                     <p class="mb-1"><strong>ประเภท:</strong> {{ asset.category }}</p>
+                    <p class="mb-1"><strong>ยี่ห้อ/รุ่น:</strong> {{ asset.model_spec }}</p>
                 </div>
                 <div class="col-md-6">
                     <p class="mb-1"><strong>วันที่จัดซื้อ:</strong> {{ asset.purchase_date }}</p>
                     <p class="mb-1"><strong>ราคาทุน:</strong> {{ "{:,.2f}".format(asset.price) }} บาท</p>
                     <p class="mb-1"><strong>อายุการใช้งาน:</strong> {{ asset.life_years }} ปี</p>
+                    <p class="mb-1"><strong>สถานที่ใช้งาน:</strong> {{ asset.location }}</p>
                 </div>
             </div>
             <p class="fs-5"><strong>สถานะ:</strong> 
@@ -104,14 +110,14 @@ HTML_TEMPLATE = '''
             <div class="mt-4 d-flex justify-content-between no-print">
                 <a href="/" class="btn btn-secondary px-4">กลับหน้าหลัก</a>
                 <div>
-                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel (ฟอร์มทางการพร้อม Dropdown)</a>
+                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel ฟอร์มทางการ</a>
                     <button type="button" class="btn btn-danger px-4" onclick="window.print()">พิมพ์ PDF / เอกสาร</button>
                 </div>
             </div>
         </div>
     {% else %}
         <div class="card mb-4 p-4">
-            <h4 class="mb-3 text-primary fw-bold">เพิ่มครุภัณฑ์ใหม่</h4>
+            <h4 class="mb-3 text-primary fw-bold">เพิ่มครุภัณฑ์ใหม่ (ทะเบียนคุมทรัพย์สิน)</h4>
             <form action="/add" method="POST" class="row g-3">
                 <div class="col-md-3">
                     <label class="form-label fw-semibold">รหัสครุภัณฑ์</label>
@@ -137,8 +143,34 @@ HTML_TEMPLATE = '''
                     <label class="form-label fw-semibold">อายุการใช้งาน (ปี)</label>
                     <input type="number" class="form-control" name="life_years" required>
                 </div>
-                <div class="col-md-3 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary w-100 fw-semibold">บันทึกข้อมูล</button>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">ยี่ห้อ / รุ่น / ลักษณะ</label>
+                    <input type="text" class="form-control" name="model_spec" value="-">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">สถานที่ใช้งาน</label>
+                    <input type="text" class="form-control" name="location" value="งานพัสดุ โรงเรียนอนุบาลอุทุมพรพิสัย">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">ประเภทเงิน</label>
+                    <select name="money_type" class="form-select">
+                        <option value="เงินงบประมาณ">เงินงบประมาณ</option>
+                        <option value="เงินนอกงบประมาณ">เงินนอกงบประมาณ</option>
+                        <option value="เงินบริจาค/เงินช่วยเหลือ">เงินบริจาค/เงินช่วยเหลือ</option>
+                        <option value="อื่นๆ">อื่นๆ</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">วิธีการได้มา</label>
+                    <select name="acquire_method" class="form-select">
+                        <option value="วิธีเฉพาะเจาะจง">วิธีเฉพาะเจาะจง</option>
+                        <option value="วิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)">วิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</option>
+                        <option value="วิธีคัดเลือก">วิธีคัดเลือก</option>
+                        <option value="รับบริจาค">รับบริจาค</option>
+                    </select>
+                </div>
+                <div class="col-md-4 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100 fw-semibold">บันทึกข้อมูลครุภัณฑ์</button>
                 </div>
             </form>
         </div>
@@ -235,7 +267,7 @@ def index():
     assets = []
     current_year = datetime.now().year
     for row in rows:
-        asset_id, code, name, category, purchase_date_str, price, life_years, is_low_value = row
+        asset_id, code, name, category, purchase_date_str, price, life_years, is_low_value = row[:8]
         purchase_date = datetime.strptime(purchase_date_str, "%Y-%m-%d")
         salvage_value = 1.0
         years_passed = current_year - purchase_date.year
@@ -257,7 +289,13 @@ def schedule(asset_id):
     row = cursor.fetchone()
     conn.close()
     if not row: return redirect(url_for('index'))
-    asset = {"id": row[0], "code": row[1], "name": row[2], "category": row[3], "purchase_date": row[4], "price": row[5], "life_years": row[6], "is_low_value": row[7]}
+    
+    asset = {
+        "id": row[0], "code": row[1], "name": row[2], "category": row[3], 
+        "purchase_date": row[4], "price": row[5], "life_years": row[6], "is_low_value": row[7],
+        "model_spec": row[8], "location": row[9], "money_type": row[10], "acquire_method": row[11]
+    }
+    
     purchase_year = datetime.strptime(asset["purchase_date"], "%Y-%m-%d").year
     life_years, price, salvage_value, is_low_value = asset["life_years"], asset["price"], 1.0, asset["is_low_value"]
     schedule_rows = []
@@ -285,7 +323,7 @@ def schedule_export_excel(asset_id):
     conn.close()
     if not row: return redirect(url_for('index'))
     
-    asset_id, code, name, category, purchase_date_str, price, life_years, is_low_value = row
+    asset_id, code, name, category, purchase_date_str, price, life_years, is_low_value, model_spec, location, money_type, acquire_method = row
     purchase_year = datetime.strptime(purchase_date_str, "%Y-%m-%d").year
     salvage_value = 1.0
     
@@ -318,29 +356,26 @@ def schedule_export_excel(asset_id):
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # สร้างส่วนหัวตามฟอร์มทางการของทะเบียนคุมทรัพย์สิน
         header_data = [
             ["", "", "", "", "", "ทะเบียนคุมทรัพย์สิน", "", "", "", "", ""],
             ["", "", "", "", "", "", "", "", "ส่วนราชการ", "สำนักงานคณะกรรมการการศึกษาขั้นพื้นฐาน", ""],
             ["", "", "", "", "", "", "", "", "หน่วยงาน", "โรงเรียนอนุบาลอุทุมพรพิสัย", ""],
             ["", "", "", "", "", "", "", "", "", "", ""],
             ["ประเภท", category, "", "", "หมายเลขครุภัณฑ์", code, "", "", "", "", ""],
-            ["รายการ", name, "", "", "ยี่ห้อ/รุ่น/ลักษณะเฉพาะ", "-", "", "", "", "", ""],
-            ["", "", "", "", "สถานที่ใช้งาน/หน่วยงานรับผิดชอบ", "งานพัสดุ โรงเรียนอนุบาลอุทุมพรพิสัย", "", "", "", "", ""],
+            ["รายการ", name, "", "", "ยี่ห้อ/รุ่น/ลักษณะเฉพาะ", model_spec, "", "", "", "", ""],
+            ["", "", "", "", "สถานที่ใช้งาน/หน่วยงานรับผิดชอบ", location, "", "", "", "", ""],
             ["ชื่อผู้ขาย/ผู้รับจ้าง/ผู้บริจาค", "-", "", "", "ที่อยู่", "-", "", "", "", "", ""],
-            ["ประเภทเงิน", "เงินงบประมาณ", "", "", "", "", "", "", "", "", ""],
-            ["วิธีการได้มา", "วิธีเฉพาะเจาะจง", "", "", "", "", "", "", "", "", ""],
+            ["ประเภทเงิน", money_type, "", "", "", "", "", "", "", "", ""],
+            ["วิธีการได้มา", acquire_method, "", "", "", "", "", "", "", "", ""],
             ["", "", "", "", "", "", "", "", "", "", ""]
         ]
         
         df_header = pd.DataFrame(header_data)
         df_header.to_excel(writer, index=False, header=False, sheet_name='ทะเบียนคุมทรัพย์สิน')
         
-        # เขียนตารางค่าเสื่อมต่อลงไปในแถวที่ 13 (index 12)
         df_schedule = pd.DataFrame(schedule_data)
         df_schedule.to_excel(writer, index=False, startrow=12, sheet_name='ทะเบียนคุมทรัพย์สิน')
         
-        # เพิ่ม Dropdown (Data Validation) สำหรับประเภทเงิน (เซลล์ B9) และวิธีการได้มา (เซลล์ B10)
         workbook = writer.book
         worksheet = writer.sheets['ทะเบียนคุมทรัพย์สิน']
         
@@ -357,14 +392,29 @@ def schedule_export_excel(asset_id):
 
 @app.route('/add', methods=['POST'])
 def add_asset():
-    code, name, category, purchase_date, price, life_years = request.form['code'], request.form['name'], request.form['category'], request.form['purchase_date'], float(request.form['price']), int(request.form['life_years'])
+    code = request.form['code']
+    name = request.form['name']
+    category = request.form['category']
+    purchase_date = request.form['purchase_date']
+    price = float(request.form['price'])
+    life_years = int(request.form['life_years'])
+    model_spec = request.form.get('model_spec', '-')
+    location = request.form.get('location', 'งานพัสดุ โรงเรียนอนุบาลอุทุมพรพิสัย')
+    money_type = request.form.get('money_type', 'เงินงบประมาณ')
+    acquire_method = request.form.get('acquire_method', 'วิธีเฉพาะเจาะจง')
+    
     is_low_value = 1 if price < 5000 else 0
+    
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
-        cursor.execute('INSERT INTO assets (code, name, category, purchase_date, price, life_years, is_low_value) VALUES (?, ?, ?, ?, ?, ?, ?)', (code, name, category, purchase_date, price, life_years, is_low_value))
+        cursor.execute('''
+            INSERT INTO assets (code, name, category, purchase_date, price, life_years, is_low_value, model_spec, location, money_type, acquire_method) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (code, name, category, purchase_date, price, life_years, is_low_value, model_spec, location, money_type, acquire_method))
         conn.commit()
-    except sqlite3.IntegrityError: pass
+    except sqlite3.IntegrityError: 
+        pass
     conn.close()
     return redirect(url_for('index'))
 
