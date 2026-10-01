@@ -5,6 +5,7 @@ from datetime import datetime
 import io
 import os
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.styles import Font
 
 app = Flask(__name__)
 
@@ -110,7 +111,7 @@ HTML_TEMPLATE = '''
             <div class="mt-4 d-flex justify-content-between no-print">
                 <a href="/" class="btn btn-secondary px-4">กลับหน้าหลัก</a>
                 <div>
-                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel ฟอร์มทางการ</a>
+                    <a href="/schedule/export_excel/{{ asset.id }}" class="btn btn-success me-2 px-4">ดาวน์โหลด Excel (ฟอนต์ TH Sarabun)</a>
                     <button type="button" class="btn btn-danger px-4" onclick="window.print()">พิมพ์ PDF / เอกสาร</button>
                 </div>
             </div>
@@ -379,6 +380,12 @@ def schedule_export_excel(asset_id):
         workbook = writer.book
         worksheet = writer.sheets['ทะเบียนคุมทรัพย์สิน']
         
+        # กำหนดฟอนต์ TH Sarabun PSK ให้ทุกเซลล์ในชีต
+        sarabun_font = Font(name='TH Sarabun PSK', size=16)
+        for row in worksheet.iter_rows(min_row=1, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column):
+            for cell in row:
+                cell.font = sarabun_font
+                
         dv_money = DataValidation(type="list", formula1='"เงินงบประมาณ, เงินนอกงบประมาณ, เงินบริจาค/เงินช่วยเหลือ, อื่นๆ"', allow_blank=True)
         worksheet.add_data_validation(dv_money)
         dv_money.add("B9")
